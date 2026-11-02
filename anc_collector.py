@@ -2820,15 +2820,29 @@ class PackageParser:
                     value,
                 )
 
+        # Detail URL can be reused across multiple sum-insured choices.
+        # Preserve Listing premium/sum and raw Detail as distinct observations.
+        detail_own = money(detail.get("coverage_own_damage"))
+        if (detail_own is not None and package.sum_insured is not None
+                and detail_own != package.sum_insured):
+            detail["own_damage_mismatch"] = {
+                "listing_sum": str(package.sum_insured),
+                "detail_own_damage": str(detail_own),
+            }
+            # Never assign another option's own-damage amount as verified.
+            package.coverage_own_damage = None
+
         package.raw_detail = detail
         package.source_url = final_url
         package.detail_status = "DONE"
-
+        notes = []
         if detail.get("premium_mismatch"):
+            notes.append("DETAIL_PREMIUM_DIFFERS_FROM_LISTING")
+        if detail.get("own_damage_mismatch"):
+            notes.append("DETAIL_OWN_DAMAGE_DIFFERS_FROM_LISTING_SUM")
+        if notes:
             package.validation_status = "REVIEW_REQUIRED"
-            package.validation_notes = (
-                "DETAIL_PREMIUM_DIFFERS_FROM_LISTING"
-            )
+            package.validation_notes = ";".join(notes)
         else:
             package.validation_status = "DETAIL_VERIFIED"
 
@@ -4095,7 +4109,7 @@ class ANCCollector:
                     package
                 )
 
-                if status == "RETRY_REQUIRED":
+                if status != "DONE":
                     details_complete = False
 
                 self.refresh_database_metrics()
@@ -4956,6 +4970,13 @@ def main():
         count = db.export_csv(
             output
         )
+        # Audit is read-only; any failure must not erase collector results.
+        try:
+            from anc_data_quality import write_report
+            audit_paths = write_report(output, Path("anc_audit_output"))
+            console.print("Data quality report:", audit_paths["summary"])
+        except Exception:
+            logger.exception("QUALITY AUDIT FAILED")
 
         summary(
             collector,
