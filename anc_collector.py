@@ -3694,6 +3694,7 @@ class ANCCollector:
 
         self.limit = limit
         self.resume = resume
+        self.retry_unavailable = os.getenv("ANC_RETRY_UNAVAILABLE", "0") == "1"
         self.debug = debug
         self.detail_mode = detail_mode
         self.max_submodels = max_submodels
@@ -3730,10 +3731,9 @@ class ANCCollector:
 
         if (
             self.resume
-            and status in (
-                "DONE",
-                "DETAIL_UNAVAILABLE",
-            )
+            and (status == "DONE" or (
+                status == "DETAIL_UNAVAILABLE" and not self.retry_unavailable
+            ))
         ):
             self.dashboard.skipped_this_run += 1
 
@@ -3780,10 +3780,9 @@ class ANCCollector:
 
         if (
             self.resume
-            and status in (
-                "DONE",
-                "DETAIL_UNAVAILABLE",
-            )
+            and (status == "DONE" or (
+                status == "DETAIL_UNAVAILABLE" and not self.retry_unavailable
+            ))
         ):
             self.dashboard.skipped_this_run += 1
 
@@ -3941,6 +3940,7 @@ class ANCCollector:
             self.resume
             and existing_branch
             and existing_branch["status"] == "DONE"
+            and not (self.retry_unavailable and existing_branch.get("detail_unavailable", 0))
         ):
             self.dashboard.branches_skipped += 1
 
@@ -4817,6 +4817,10 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--retry-unavailable", action="store_true",
+        help="Explicitly retry previously unavailable Detail pages (404); normal resume skips them."
+    )
+    parser.add_argument(
         "--export-only",
         action="store_true",
     )
@@ -4910,6 +4914,8 @@ def main():
         os.environ['ANC_DB_BACKEND'] = args.db_backend
     if args.sqlite_path:
         os.environ['ANC_SQLITE_PATH'] = args.sqlite_path
+    if args.retry_unavailable:
+        os.environ['ANC_RETRY_UNAVAILABLE'] = "1"
 
     if args.dry_run:
         dry_run()
