@@ -123,3 +123,15 @@ git pull --ff-only origin refactor-v1
 ```
 ควรตรวจ `anc_audit_v3/anc_audit_all.csv` และ `anc_audit_v3/anc_audit_summary.csv`.
 ข้อจำกัด: คอลัมน์เปรียบเทียบทุนนำเสนอใช้ทุนเป้าหมายของ 20 สเปกที่กำหนด ไม่ใช่การยืนยันว่าทุนใกล้ที่สุดในเว็บไซต์ทั้งหมด และไม่ปรับเบี้ยตามสัดส่วนทุน.
+
+
+## Pilot specific target index
+
+`--target-index N` เลือกชุดจังหวัด×รถลำดับที่ N (เริ่มจาก 1) แทน `--limit`; ใช้ร่วมกันไม่ได้. เมื่อจังหวัดแรกเป็นสุโขทัย มีรถตาม TARGET_SPECS 20 รุ่น, `--target-index 11` คือ Honda City 2022 ซ่อมห้าง. ใช้ SQLite ชุดใหม่แยกทดลอง.
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest -v test_anc_target_selection
+.\.venv\Scripts\python.exe anc_collector.py --db-backend sqlite --sqlite-path .\anc_pilot_dealer_city2022.sqlite3 --target-index 11 --delay 3 --output .\anc_pilot_dealer_city2022.csv
+```
+
+ตัวเลือกนี้ยังไม่ได้ยืนยันว่ารุ่นย่อยที่เว็บไซต์เสนอมีจริงสำหรับปีดังกล่าว; ต้องตรวจรายชื่อรุ่นย่อย/ปี/รหัสประกันภายหลัง.
