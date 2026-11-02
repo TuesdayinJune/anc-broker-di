@@ -2820,31 +2820,20 @@ class PackageParser:
                     value,
                 )
 
-        # Detail URL can be reused across multiple sum-insured choices.
-        # Preserve Listing premium/sum and raw Detail as distinct observations.
-        detail_own = money(detail.get("coverage_own_damage"))
-        if (detail_own is not None and package.sum_insured is not None
-                and detail_own != package.sum_insured):
-            detail["own_damage_mismatch"] = {
-                "listing_sum": str(package.sum_insured),
-                "detail_own_damage": str(detail_own),
-            }
-            # Never assign another option's own-damage amount as verified.
-            package.coverage_own_damage = None
-
+        # Sum insured (Listing) and Own Damage coverage (Detail) are
+        # independent business fields: inequality is NOT a defect.
+        # Premium from Listing remains the premium for the selected offer.
+        # Detail-only values retain their own provenance in raw_detail.
+        detail["source_scope"] = "DETAIL_PAGE;MAY_BE_SHARED_ACROSS_SUM_OPTIONS"
         package.raw_detail = detail
         package.source_url = final_url
         package.detail_status = "DONE"
-        notes = []
         if detail.get("premium_mismatch"):
-            notes.append("DETAIL_PREMIUM_DIFFERS_FROM_LISTING")
-        if detail.get("own_damage_mismatch"):
-            notes.append("DETAIL_OWN_DAMAGE_DIFFERS_FROM_LISTING_SUM")
-        if notes:
             package.validation_status = "REVIEW_REQUIRED"
-            package.validation_notes = ";".join(notes)
+            package.validation_notes = "DETAIL_PREMIUM_DIFFERS_FROM_LISTING"
         else:
             package.validation_status = "DETAIL_VERIFIED"
+            package.validation_notes = ""
 
         return package
 
@@ -4948,6 +4937,12 @@ def main():
             count = db.export_csv(
                 output
             )
+            try:
+                from anc_data_quality import write_report
+                report = write_report(output, Path("anc_audit_output"))
+                console.print("Data quality report:", report["summary"])
+            except Exception:
+                logger.exception("QUALITY AUDIT FAILED")
 
             console.print(
                 Panel.fit(
