@@ -27,6 +27,22 @@ class TargetSelectionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             select_target_scope(self.targets, limit=3, target_index=11)
 
+    def test_target_range(self):
+        batch = select_target_scope(self.targets, start_index=21, end_index=40)
+        self.assertEqual(len(batch), 20)
+        self.assertEqual(batch[0][1], "พะเยา")
+        self.assertEqual((batch[0][2].brand, batch[0][2].model, batch[0][2].year),
+                         ("HONDA", "CITY", 2020))
+        self.assertEqual(batch[-1][1], "พะเยา")
+
+    def test_full_range_and_invalid_ranges(self):
+        self.assertEqual(len(select_target_scope(self.targets, start_index=1, end_index=480)), 480)
+        for bad in ((0, 20), (21, 20), (1, 481)):
+            with self.assertRaises(ValueError):
+                select_target_scope(self.targets, start_index=bad[0], end_index=bad[1])
+        with self.assertRaises(ValueError):
+            select_target_scope(self.targets, limit=20, start_index=21, end_index=40)
+
 
 if __name__ == "__main__":
     unittest.main()
