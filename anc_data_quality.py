@@ -34,11 +34,16 @@ def raw_json(value):
 def analyze(rows):
     """Return annotated rows without changing input; never assume sum=own damage."""
     groups = defaultdict(set)
+    def detail_group_key(row):
+        # Same URL on another vehicle/province is a different quoting context.
+        return (row.get('province'), row.get('car_id'),
+                row.get('vehicle_year'), row.get('repair_type'),
+                (row.get('source_url') or '').strip())
     for row in rows:
         url = (row.get('source_url') or '').strip()
         sum_insured = decimal_value(row.get('actual_sum_insured'))
         if url and sum_insured is not None:
-            groups[url].add(sum_insured)
+            groups[detail_group_key(row)].add(sum_insured)
 
     annotated = []
     for data in rows:
@@ -51,31 +56,54 @@ def analyze(rows):
         diff = (abs(listing_price - detail_price)
                 if listing_price is not None and detail_price is not None else None)
         status = (row.get('detail_status') or '').upper()
-        flags = []
+        url = (row.get('source_url') or '').strip()
+        count_sums = len(groups[detail_group_key(row)]) if url else 0
+        shared_url = count_sums > 1
+        review_flags = []
+        info_flags = []
         if status != 'DONE':
-            flags.append(status or 'DETAIL_NOT_VERIFIED')
+            review_flags.append(status or 'DETAIL_NOT_VERIFIED')
+        if shared_url:
+            # A single detail page is not necessarily specific to every sum.
+            # Confirmed manually for BKI 15054 / CITY 2020 car 12.
+            info_flags.append('SHARED_DETAIL_URL_MULTI_SUM')
         if diff is not None:
             if diff > 100:
-                flags.append('PREMIUM_DIFF_GT_100')
+                (info_flags if shared_url else review_flags).append(
+                    'PREMIUM_DIFF_GT_100_SHARED_REFERENCE'
+                    if shared_url else 'PREMIUM_DIFF_GT_100_UNEXPLAINED')
             elif diff > 1:
-                flags.append('PREMIUM_DIFF_1_TO_100')
+                (info_flags if shared_url else review_flags).append(
+                    'PREMIUM_DIFF_1_TO_100_SHARED_REFERENCE'
+                    if shared_url else 'PREMIUM_DIFF_1_TO_100_UNEXPLAINED')
             elif diff > 0:
-                flags.append('PRICE_ROUNDING_LT_1')
-        url = (row.get('source_url') or '').strip()
-        if url and len(groups[url]) > 1:
-            flags.append('SHARED_DETAIL_URL_MULTI_SUM')
+                info_flags.append('PRICE_ROUNDING_LT_1')
         if not (row.get('insurer') or '').strip():
-            flags.append('INSURER_NAME_MISSING')
+            review_flags.append('INSURER_NAME_MISSING')
         label = (row.get('package_name') or '').lower()
         if any(s in label for s in ('กรุงเทพ', 'กทม.', 'ปริมณฑล', '(bkk)', 'bangkok')):
-            flags.append('PACKAGE_LOCATION_REVIEW')
-        # Ignore legacy V2 notes that incorrectly equated Own Damage with Sum.
+            review_flags.append('PACKAGE_LOCATION_REVIEW')
+
+        # Older Collector versions marked mismatches as REVIEW_REQUIRED.
+        # Reinterpret the old note using the complete CSV's shared-URL context.
         legacy_notes = set((row.get('validation_notes') or '').split(';'))
-        actual_notes = legacy_notes - {'', 'DETAIL_OWN_DAMAGE_DIFFERS_FROM_LISTING_SUM'}
+        excluded = {'', 'DETAIL_OWN_DAMAGE_DIFFERS_FROM_LISTING_SUM'}
+        if shared_url or (diff is not None and diff <= 1):
+            excluded.add('DETAIL_PREMIUM_DIFFERS_FROM_LISTING')
+        actual_notes = legacy_notes - excluded
         if status == 'DONE' and actual_notes:
-            flags.append('VALIDATION_REVIEW_REQUIRED')
-        # Rounding is not by itself a re-collection request.
-        review = any(f != 'PRICE_ROUNDING_LT_1' for f in flags)
+            review_flags.append('VALIDATION_REVIEW_REQUIRED')
+
+        review = bool(review_flags)
+        price_context = (
+            'DETAIL_NOT_AVAILABLE' if status != 'DONE'
+            else 'SHARED_URL_PLAN_REFERENCE' if shared_url
+            else 'DETAIL_PRICE_UNAVAILABLE' if detail_price is None
+            else 'UNEXPLAINED_PRICE_DIFFERENCE' if diff is not None and diff > 1
+            else 'MATCH_OR_ROUNDING')
+        coverage_scope = (
+            'PLAN_PAGE_REFERENCE_NOT_VERIFIED_FOR_EACH_SUM'
+            if shared_url else 'DETAIL_PAGE_OBSERVATION')
         spec = SPEC_BY_KEY.get(((row.get('brand') or '').upper(),
                                 (row.get('model') or '').upper(),
                                 int(row.get('vehicle_year') or 0)))
@@ -93,8 +121,12 @@ def analyze(rows):
             'detail_premium_observed': str(detail_price) if detail_price is not None else '',
             'premium_abs_diff': str(diff) if diff is not None else '',
             'detail_own_damage_observed': str(detail_own) if detail_own is not None else '',
-            'shared_detail_url_distinct_sums': len(groups[url]) if url else 0,
-            'review_flags': ';'.join(flags),
+            'shared_detail_url_distinct_sums': count_sums,
+            'price_context_status': price_context,
+            'detail_coverage_scope': coverage_scope,
+            'premium_source_for_comparison': 'LISTING',
+            'review_flags': ';'.join(review_flags),
+            'information_flags': ';'.join(info_flags),
             'needs_review': 'YES' if review else 'NO',
         })
         annotated.append(row)
@@ -113,7 +145,9 @@ def write_report(input_csv, output_dir):
             'target_sum_abs_gap_thb', 'target_sum_gap_pct', 'sum_match_status',
             'detail_premium_observed', 'premium_abs_diff',
             'detail_own_damage_observed', 'shared_detail_url_distinct_sums',
-            'review_flags', 'needs_review']
+            'price_context_status', 'detail_coverage_scope',
+            'premium_source_for_comparison',
+            'review_flags', 'information_flags', 'needs_review']
     fields = original_fields + [f for f in more if f not in original_fields]
     paths = {'all': output_dir / 'anc_audit_all.csv',
              'review': output_dir / 'anc_audit_review_queue.csv',
@@ -128,9 +162,13 @@ def write_report(input_csv, output_dir):
     for row in rows:
         counters['STATUS:' + (row.get('detail_status') or '(blank)')] += 1
         counters['SUM_MATCH:' + (row.get('sum_match_status') or '(blank)')] += 1
+        counters['PRICE_CONTEXT:' + row['price_context_status']] += 1
         for flag in (row['review_flags'] or '').split(';'):
             if flag:
-                counters['FLAG:' + flag] += 1
+                counters['REVIEW_FLAG:' + flag] += 1
+        for flag in (row['information_flags'] or '').split(';'):
+            if flag:
+                counters['INFO_FLAG:' + flag] += 1
     with paths['summary'].open('w', newline='', encoding='utf-8-sig') as f:
         writer = csv.writer(f)
         writer.writerow(['metric', 'count'])
