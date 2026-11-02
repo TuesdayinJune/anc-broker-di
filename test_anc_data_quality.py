@@ -22,7 +22,8 @@ class QualityTests(unittest.TestCase):
         ]
         results = analyze(rows)
         self.assertEqual(results[0]["premium_abs_diff"], "3500")
-        self.assertIn("DETAIL_OWN_DAMAGE_DIFF_FROM_SUM", results[0]["review_flags"])
+        self.assertNotIn("DETAIL_OWN_DAMAGE_DIFF_FROM_SUM", results[0]["review_flags"])
+        self.assertEqual(results[0]["detail_own_damage_observed"], "100000")
         self.assertIn("SHARED_DETAIL_URL_MULTI_SUM", results[1]["review_flags"])
         self.assertEqual(rows[0]["premium"], "11500")
 
@@ -37,6 +38,17 @@ class QualityTests(unittest.TestCase):
         results = analyze(rows)
         self.assertEqual(results[0]["needs_review"], "YES")
         self.assertEqual(results[1]["needs_review"], "NO")
+
+    def test_target_sum_gap(self):
+        offer = {"brand":"HONDA", "model":"CITY", "vehicle_year":"2020", "repair_type":"ซ่อมอู่",
+                 "actual_sum_insured":"400000", "premium":"11500", "detail_status":"DONE",
+                 "validation_status":"DETAIL_VERIFIED", "insurer":"MSIG", "source_url":"/x"}
+        result = analyze([offer])[0]
+        self.assertEqual(result["target_sum_insured"], "390000")
+        self.assertEqual(result["target_sum_gap_thb"], "10000")
+        self.assertEqual(result["target_sum_gap_pct"], "2.56")
+        self.assertEqual(result["sum_match_status"], "ALTERNATIVE")
+        self.assertEqual(result["needs_review"], "NO")
 
     def test_csv_export(self):
         with tempfile.TemporaryDirectory() as d:
