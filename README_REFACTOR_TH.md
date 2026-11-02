@@ -105,3 +105,21 @@ git pull --ff-only origin refactor-v1
 การอัปเดตโค้ด **ไม่แก้ย้อนหลังในฐานข้อมูลเดิม**; รายงานออฟไลน์จะตรวจได้จาก `raw_detail`.
 อย่าลบฐาน SQLite เดิมหรือรัน `--no-resume` กับไฟล์เดิมโดยไม่สำรองข้อมูลก่อน.
 การทดสอบ Unit Tests ไม่ใช่การรับรองความถูกต้องของราคา/กรมธรรม์กับเว็บไซต์จริง.
+
+## กติกาที่ผู้ขอยืนยัน (2 พ.ย. 2569)
+
+- เก็บ **ทุกทุนประกัน** ตามที่เว็บไซต์แสดง ไม่กรองให้ตรงทุนเป้าหมาย
+- ในรายงาน `anc_audit_all.csv` มี `target_sum_insured`, `target_sum_gap_thb` (ทุนเสนอ - ทุนเป้าหมาย; บวก=สูงกว่า), `target_sum_abs_gap_thb`, `target_sum_gap_pct`, `sum_match_status`
+- `coverage_own_damage` เป็นความคุ้มครองแยกจาก `actual_sum_insured`; ไม่ต้องเท่ากัน และความต่างกันอย่างเดียวไม่ใช่ข้อผิดพลาด
+- `premium` จาก Listing เป็นราคาเสนอจริงที่เก็บไว้ ส่วนราคา Detail อยู่ใน `raw_detail.premium` และคอลัมน์ตรวจสอบ `detail_premium_observed`
+- ยังคงตรวจ `PREMIUM_DIFF_GT_100`, URL Detail หลายทุน, ข้อมูลบริษัทที่ขาด, ข้อจำกัดจังหวัด, 404 และ RETRY
+- รายงานนี้ไม่เปลี่ยนฐาน SQLite เดิม ใช้คำสั่ง `--export-only` เพื่อส่งออกข้อมูลเก่าและคำนวณคอลัมน์ใหม่ได้โดยไม่เรียกเว็บ
+
+### วิธีรันตรวจข้อมูลเดิม (ไม่เรียกเว็บไซต์)
+```powershell
+git pull --ff-only origin refactor-v1
+.\.venv\Scripts\python.exe -m unittest -v test_anc_requirements test_anc_sqlite test_anc_data_quality
+.\.venv\Scripts\python.exe anc_data_quality.py --input .\anc_city2020_v2.csv --out .\anc_audit_v3
+```
+ควรตรวจ `anc_audit_v3/anc_audit_all.csv` และ `anc_audit_v3/anc_audit_summary.csv`.
+ข้อจำกัด: คอลัมน์เปรียบเทียบทุนนำเสนอใช้ทุนเป้าหมายของ 20 สเปกที่กำหนด ไม่ใช่การยืนยันว่าทุนใกล้ที่สุดในเว็บไซต์ทั้งหมด และไม่ปรับเบี้ยตามสัดส่วนทุน.
