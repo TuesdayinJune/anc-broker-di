@@ -11,6 +11,7 @@ import json
 from collections import Counter, defaultdict
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from anc_requirements import SPEC_BY_KEY
 
 
 def decimal_value(value):
@@ -60,8 +61,6 @@ def analyze(rows):
                 flags.append('PREMIUM_DIFF_1_TO_100')
             elif diff > 0:
                 flags.append('PRICE_ROUNDING_LT_1')
-        if detail_own is not None and listing_sum is not None and detail_own != listing_sum:
-            flags.append('DETAIL_OWN_DAMAGE_DIFF_FROM_SUM')
         url = (row.get('source_url') or '').strip()
         if url and len(groups[url]) > 1:
             flags.append('SHARED_DETAIL_URL_MULTI_SUM')
@@ -70,11 +69,27 @@ def analyze(rows):
         label = (row.get('package_name') or '').lower()
         if any(s in label for s in ('กรุงเทพ', 'กทม.', 'ปริมณฑล', '(bkk)', 'bangkok')):
             flags.append('PACKAGE_LOCATION_REVIEW')
-        if status == 'DONE' and (row.get('validation_status') or '') != 'DETAIL_VERIFIED':
+        # Ignore legacy V2 notes that incorrectly equated Own Damage with Sum.
+        legacy_notes = set((row.get('validation_notes') or '').split(';'))
+        actual_notes = legacy_notes - {'', 'DETAIL_OWN_DAMAGE_DIFFERS_FROM_LISTING_SUM'}
+        if status == 'DONE' and actual_notes:
             flags.append('VALIDATION_REVIEW_REQUIRED')
         # Rounding is not by itself a re-collection request.
         review = any(f != 'PRICE_ROUNDING_LT_1' for f in flags)
+        spec = SPEC_BY_KEY.get(((row.get('brand') or '').upper(),
+                                (row.get('model') or '').upper(),
+                                int(row.get('vehicle_year') or 0)))
+        target = Decimal(spec.target_sum_insured) if spec else None
+        signed_gap = listing_sum - target if listing_sum is not None and target is not None else None
+        gap_percent = ((signed_gap / target) * 100).quantize(Decimal('0.01')) if signed_gap is not None and target else None
         row.update({
+            'listing_premium': str(listing_price) if listing_price is not None else '',
+            'listing_sum_insured': str(listing_sum) if listing_sum is not None else '',
+            'target_sum_insured': str(target) if target is not None else '',
+            'target_sum_gap_thb': str(signed_gap) if signed_gap is not None else '',
+            'target_sum_abs_gap_thb': str(abs(signed_gap)) if signed_gap is not None else '',
+            'target_sum_gap_pct': str(gap_percent) if gap_percent is not None else '',
+            'sum_match_status': 'NOT_APPLICABLE' if target is None or listing_sum is None else ('EXACT' if signed_gap == 0 else 'ALTERNATIVE'),
             'detail_premium_observed': str(detail_price) if detail_price is not None else '',
             'premium_abs_diff': str(diff) if diff is not None else '',
             'detail_own_damage_observed': str(detail_own) if detail_own is not None else '',
@@ -94,7 +109,9 @@ def write_report(input_csv, output_dir):
         reader = csv.DictReader(f)
         original_fields = list(reader.fieldnames or [])
         rows = analyze(list(reader))
-    more = ['detail_premium_observed', 'premium_abs_diff',
+    more = ['listing_premium', 'listing_sum_insured', 'target_sum_insured', 'target_sum_gap_thb',
+            'target_sum_abs_gap_thb', 'target_sum_gap_pct', 'sum_match_status',
+            'detail_premium_observed', 'premium_abs_diff',
             'detail_own_damage_observed', 'shared_detail_url_distinct_sums',
             'review_flags', 'needs_review']
     fields = original_fields + [f for f in more if f not in original_fields]
