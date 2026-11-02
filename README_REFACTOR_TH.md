@@ -135,3 +135,33 @@ git pull --ff-only origin refactor-v1
 ```
 
 ตัวเลือกนี้ยังไม่ได้ยืนยันว่ารุ่นย่อยที่เว็บไซต์เสนอมีจริงสำหรับปีดังกล่าว; ต้องตรวจรายชื่อรุ่นย่อย/ปี/รหัสประกันภายหลัง.
+
+## FULL RUN 24 จังหวัด × 20 สเปก (480 targets)
+
+รันได้ใน PowerShell บน Windows ที่ไม่มี MySQL หรือสิทธิ์ Administrator (ต้องมี .venv ติดตั้ง dependencies เรียบร้อยแล้ว):
+
+```powershell
+git switch refactor-v1
+git pull --ff-only origin refactor-v1
+.\.venv\Scripts\python.exe -m unittest -v test_anc_requirements test_anc_sqlite test_anc_data_quality test_anc_target_selection
+.\.venv\Scripts\python.exe anc_full_run.py --db .\anc_full_24provinces.sqlite3 --output .\anc_full_24provinces.csv --batch-size 20 --delay 3 --max-requests 18000
+```
+
+1. `anc_full_run.py` เปิด Collector ทีละชุด 20 Target รวม 480 ชุด โดยส่ง `--start-index` และ `--end-index`, SQLite เดียวกันทุกชุดและ Resume อัตโนมัติ
+2. หลังแต่ละชุด Collector export CSV ทั้งฐาน + Audit อัตโนมัติใน `anc_audit_output/`; wrapper เขียน `anc_full_run/checkpoint_XXX_YYY.json` และ `batch_XXX_YYY_tryN.log`
+3. หาก process ถึง HTTP budget จะหยุดด้วย exit code 75 แล้ว retry ชุดเดียวกันได้สูงสุดอีกครั้ง; หากยังถึง budget อีก จะหยุดให้ผู้ใช้ตรวจ ไม่วนไม่สิ้นสุด
+4. หากโดน robots/site block (HTTP 401/403/429) จะหยุดด้วย exit code 76, **ไม่** retry ฝ่าการจำกัดเว็บไซต์
+5. หาก target รายตัวล้มเหลว (เช่น ไม่มีรุ่นใน catalog) Collector บันทึก `FAILED` แล้วทำรายการถัดไป. ถ้าทั้งช่วงมีเป้าหมายล้มเหลวอย่างน้อย 80% และไม่มีข้อมูลเพิ่ม จะหยุดด้วย exit code 77 เพื่อป้องกันการรันผิดตลอดประเทศ
+6. ไม่ใช่ทุกผลต้อง Detail DONE: Listing Only, URL ร่วม, ทุนต่างเป้า และชื่อแพ็กเกจพื้นที่จะเก็บตามจริงพร้อมธงตรวจ
+7. ถ้าหยุดโดยกด Ctrl+C หรือเครื่องดับ ให้ใช้คำสั่งเดิมอีกครั้งเพื่อ Resume. Wrapper จะวนตั้งแต่ชุดแรก แต่ Target ที่ DONE จะถูกข้าม; Target PARTIAL อาจตรวจ Listing อีกครั้ง
+8. **ห้ามเปิดสอง Collector พร้อมกันบน SQLite ชุดเดียวกัน** และอย่าคัดลอก SQLite ขณะโปรแกรมกำลังเขียน หากต้องสำรอง ให้ปิด Collector ก่อนหรือใช้ SQLite backup API
+9. จำนวน 480 คือจำนวนเงื่อนไขทั้งหมด ไม่ใช่จำนวนข้อเสนอหรือจำนวนรุ่นย่อย; `COLLECT` ยังคงเป็นแค่การคัดกรองเบื้องต้นและไม่ยืนยันการเข้ารหัสรับประกันภัย 110 หรือ trim/year จริง
+10. ใช้ภาพรวมสถานะ `DONE/PARTIAL/FAILED/BLOCKED/INTERRUPTED` ประกอบกับจำนวนข้อเสนอ. อย่าแปล `FAILED` ว่าไม่มีบริษัทเสนอประกันโดยอัตโนมัติ
+
+ตรวจความคืบหน้าระหว่างรัน:
+```powershell
+Get-ChildItem .\anc_full_run\checkpoint_*.json | Sort-Object Name | Select-Object -Last 3
+Get-Content .\anc_audit_output\anc_audit_summary.csv -TotalCount 30
+```
+
+ฐานข้อมูลใหม่ `anc_full_24provinces.sqlite3` ไม่ทับ Pilot เดิม. `--max-requests` เป็นเพดานด้านความปลอดภัยของโปรแกรม ไม่ใช่โควตาของเว็บไซต์ ควรปฏิบัติตามเงื่อนไขการเข้าถึงและนโยบายบริษัทเสมอ.
