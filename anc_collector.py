@@ -61,6 +61,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Optional
+from anc_requirements import TARGET_SPECS, assess_variant, spec_for, write_scope_reports
 from urllib.parse import quote, unquote, urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
@@ -203,28 +204,8 @@ class Vehicle:
     year: int
 
 
-VEHICLES = [
-    Vehicle("HONDA", "CITY", 2020),
-    Vehicle("MAZDA", "2", 2019),
-    Vehicle("TOYOTA", "YARIS", 2019),
-    Vehicle("HONDA", "CIVIC", 2019),
-    Vehicle("HONDA", "JAZZ", 2018),
-    Vehicle("TOYOTA", "VIOS", 2013),
-    Vehicle("TOYOTA", "C-HR", 2019),
-    Vehicle("NISSAN", "ALMERA", 2020),
-    Vehicle("HONDA", "HR-V", 2018),
-    Vehicle("ISUZU", "D-MAX", 2020),
-    Vehicle("HONDA", "CITY", 2022),
-    Vehicle("TOYOTA", "YARIS", 2023),
-    Vehicle("HONDA", "HR-V", 2023),
-    Vehicle("TOYOTA", "YARIS CROSS", 2024),
-    Vehicle("MAZDA", "2", 2022),
-    Vehicle("HONDA", "CIVIC", 2023),
-    Vehicle("TOYOTA", "COROLLA CROSS", 2022),
-    Vehicle("MAZDA", "CX-30", 2022),
-    Vehicle("MAZDA", "CX-3", 2022),
-    Vehicle("MITSUBISHI", "XFORCE", 2025),
-]
+# User requirements: single repair type per model-year, plus target sum insured.
+VEHICLES = [Vehicle(s.brand, s.model, s.year) for s in TARGET_SPECS]
 
 assert len(PROVINCES) == 24
 assert len(VEHICLES) == 20
@@ -4239,10 +4220,12 @@ class ANCCollector:
 
             return "SKIPPED"
 
-        entries = self.catalog.candidates(
-            vehicle
-        )
-
+        all_entries = self.catalog.candidates(vehicle)
+        entries = [e for e in all_entries if assess_variant(vehicle, e).action == 'COLLECT']
+        excluded = len(all_entries) - len(entries)
+        if excluded:
+            logger.info('VARIANT SCREEN | %s %s %s | eligible=%s | excluded_or_review=%s',
+                        vehicle.brand, vehicle.model, vehicle.year, len(entries), excluded)
         if not entries:
             self.db.set_target(
                 region,
@@ -4280,9 +4263,8 @@ class ANCCollector:
             total_entries,
         )
 
-        expected_branches = (
-            len(entries) * len(REPAIR_TYPES)
-        )
+        selected_repairs = (spec_for(vehicle).repair_type,)
+        expected_branches = len(entries) * len(selected_repairs)
 
         completed_branches = 0
 
@@ -4308,7 +4290,7 @@ class ANCCollector:
                         repair,
                     )
                 )
-                for repair in REPAIR_TYPES
+                for repair in selected_repairs
             }
 
             if (
@@ -4319,18 +4301,14 @@ class ANCCollector:
                     for value in existing_branches.values()
                 )
             ):
-                completed_branches += len(
-                    REPAIR_TYPES
-                )
+                completed_branches += len(selected_repairs)
 
-                self.dashboard.branches_skipped += len(
-                    REPAIR_TYPES
-                )
+                self.dashboard.branches_skipped += len(selected_repairs)
 
                 self.dashboard.event(
                     (
                         f"Car ID {entry.car_id} | "
-                        "Both repair branches already DONE"
+                        "Required repair branch already DONE"
                     ),
                     "SKIP",
                 )
@@ -4376,7 +4354,7 @@ class ANCCollector:
                 continue
 
             for repair_index, repair in enumerate(
-                REPAIR_TYPES,
+                selected_repairs,
                 start=1,
             ):
                 if STOP_REQUESTED:
@@ -4607,6 +4585,8 @@ def print_catalog(delay: float):
         )
         table.add_column("Car IDs")
 
+        report_paths = write_scope_reports(VEHICLES, catalog, Path('.'))
+        console.print('Scope audit files:', *map(str, report_paths))
         for vehicle in VEHICLES:
             entries = catalog.candidates(
                 vehicle
