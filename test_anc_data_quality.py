@@ -24,7 +24,9 @@ class QualityTests(unittest.TestCase):
         self.assertEqual(results[0]["premium_abs_diff"], "3500")
         self.assertNotIn("DETAIL_OWN_DAMAGE_DIFF_FROM_SUM", results[0]["review_flags"])
         self.assertEqual(results[0]["detail_own_damage_observed"], "100000")
-        self.assertIn("SHARED_DETAIL_URL_MULTI_SUM", results[1]["review_flags"])
+        self.assertIn("SHARED_DETAIL_URL_MULTI_SUM", results[1]["information_flags"])
+        self.assertEqual(results[0]["price_context_status"], "SHARED_URL_PLAN_REFERENCE")
+        self.assertEqual(results[0]["needs_review"], "NO")
         self.assertEqual(rows[0]["premium"], "11500")
 
     def test_unavailable_and_rounding(self):
