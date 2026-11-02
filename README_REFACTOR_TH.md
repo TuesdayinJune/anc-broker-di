@@ -37,3 +37,42 @@ git pull --ff-only origin refactor-v1
 2. ยืนยันปีรุ่นย่อย/เครื่องยนต์จริง/ประเภทรหัสรถ และทดสอบ URL โดยตัวกรองตรงปี
 3. เพิ่มผลการตรวจ CC/ปีจริงที่ยืนยันแล้วให้ rules
 4. ทดสอบ 1 จังหวัด 1 รถด้วย DB แยก ก่อนขยาย 24 จังหวัด
+
+## SQLite สำหรับเครื่องบริษัทที่ไม่มี MySQL Server
+
+เพิ่ม Backend ชื่อ `anc_sqlite_backend.py` ใช้ `sqlite3` จาก Python โดยไม่ต้องติดตั้งฐานข้อมูล Server
+และยังใช้ตาราง `anc_competitor_*_v4` ตามชื่อเดิมในไฟล์ SQLite
+ระบบ MySQL เดิมยังอยู่และเป็นค่า default ถ้าไม่ระบุ `--db-backend`
+
+### อัปเดตโค้ด (ใน PowerShell ที่ D:\WORK\anc-broker-di)
+
+```powershell
+git switch refactor-v1
+git pull --ff-only origin refactor-v1
+.\.venv\Scripts\python.exe -m unittest -v test_anc_requirements test_anc_sqlite
+```
+
+การทดสอบ SQLite ใช้ Temporary Directory ไม่เรียกเว็บไซต์ ไม่ต่อ MySQL และไม่แตะฐานเดิม
+ต้องได้ `OK` จึงไปต่อ (ถ้ามี ERROR ให้หยุดและส่งข้อความจาก Terminal)
+
+### ทดสอบหนึ่ง Target
+
+เมื่อได้รับอนุญาตให้เรียกเว็บไซต์และการทดสอบผ่านแล้ว:
+
+```powershell
+.\.venv\Scripts\python.exe anc_collector.py --db-backend sqlite --sqlite-path .\anc_broker_test.sqlite3 --limit 1 --delay 3 --debug
+```
+
+โปรแกรมจะสร้าง `anc_broker_test.sqlite3` ในโฟลเดอร์ปัจจุบัน และ CSV ที่ตั้งค่าไว้
+`--limit 1` เลือกเป้าหมายแรก คือ สุโขทัย / HONDA CITY / 2020; ครอบคลุมรุ่นย่อยผู้สมัครและซ่อมอู่ของ Target นี้ ไม่ใช่แค่แพ็กเกจเดียว
+ผลสำเร็จขึ้นกับเว็บไซต์จริง ไม่มีการการันตีว่าจะมีข้อเสนอประกันภัยทุกชุด
+
+### อ่านข้อมูลหลังทดลอง
+
+```powershell
+.\.venv\Scripts\python.exe -c "import sqlite3; c=sqlite3.connect('anc_broker_test.sqlite3'); print(c.execute('select province, count(*) from anc_competitor_insurance_v4 group by province').fetchall()); print(c.execute('select status,count(*) from anc_competitor_branch_v4 group by status').fetchall()); c.close()"
+```
+
+ควรเก็บ SQLite และ WAL/SHM files ในเครื่องตามนโยบาย IT และไม่ Push ขึ้น GitHub (`.gitignore` ได้เพิ่ม pattern)
+**ข้อควรทราบ** SQLite บันทึก Decimal เป็น TEXT เพื่อหลีกเลี่ยงการเสียความแม่นยำจาก Float; การวิเคราะห์ตัวเลขต้องแปลงเป็น Decimal/CAST
+**ยังไม่ทดสอบ End-to-End บนเครื่องผู้ใช้** ต้องตรวจ `test_anc_sqlite` และผลจาก 1 Target ก่อนขยายงาน
