@@ -3646,14 +3646,23 @@ class Database:
 # COLLECTOR
 # ============================================================
 
-def select_target_scope(targets, limit=None, target_index=None):
-    """Select either one 1-based target or the first N targets, offline."""
-    if limit is not None and target_index is not None:
-        raise ValueError("--limit and --target-index cannot be used together")
+def select_target_scope(targets, limit=None, target_index=None,
+                        start_index=None, end_index=None):
+    """Choose one target, a range, or prefix; all indexes are 1-based."""
+    modes = sum([limit is not None, target_index is not None,
+                 start_index is not None or end_index is not None])
+    if modes > 1:
+        raise ValueError("Choose only one of --limit, --target-index or --start-index/--end-index")
     if target_index is not None:
         if not (1 <= target_index <= len(targets)):
             raise ValueError("target index outside 1.." + str(len(targets)))
         return targets[target_index - 1:target_index]
+    if start_index is not None or end_index is not None:
+        start = start_index or 1
+        end = end_index or len(targets)
+        if not (1 <= start <= end <= len(targets)):
+            raise ValueError("target range must be inside 1.." + str(len(targets)))
+        return targets[start - 1:end]
     return targets[:limit] if limit is not None else targets
 
 
@@ -3671,6 +3680,8 @@ class ANCCollector:
         max_details: int,
         target_index: Optional[int] = None,
         max_requests: int = MAX_REQUESTS,
+        start_index: Optional[int] = None,
+        end_index: Optional[int] = None,
     ):
         self.db = db
 
@@ -3702,6 +3713,8 @@ class ANCCollector:
 
         self.limit = limit
         self.target_index = target_index
+        self.start_index = start_index
+        self.end_index = end_index
         self.resume = resume
         self.retry_unavailable = os.getenv("ANC_RETRY_UNAVAILABLE", "0") == "1"
         self.debug = debug
@@ -4468,6 +4481,8 @@ class ANCCollector:
             list(self.targets()),
             limit=self.limit,
             target_index=self.target_index,
+            start_index=self.start_index,
+            end_index=self.end_index,
         )
 
         self.dashboard.target_total = len(
@@ -4857,8 +4872,10 @@ def parse_args():
         "--target-index",
         type=int,
         default=None,
-        help="Collect exactly the Nth (1-based) province x vehicle target; e.g. 11 = first province / 11th vehicle",
+        help="Collect exactly the Nth 1-based province x vehicle target",
     )
+    parser.add_argument("--start-index", type=int, default=None)
+    parser.add_argument("--end-index", type=int, default=None)
 
     parser.add_argument(
         "--delay",
@@ -4919,8 +4936,14 @@ def parse_args():
         maximum = len(PROVINCES) * len(VEHICLES)
         if not (1 <= args.target_index <= maximum):
             parser.error(f"--target-index must be in 1..{maximum}")
-    if args.limit is not None and args.target_index is not None:
-        parser.error("--limit and --target-index cannot be combined")
+    total = len(PROVINCES) * len(VEHICLES)
+    if args.start_index is not None or args.end_index is not None:
+        start, end = args.start_index or 1, args.end_index or total
+        if not (1 <= start <= end <= total):
+            parser.error(f"--start-index/--end-index must specify a valid range in 1..{total}")
+    if sum([args.limit is not None, args.target_index is not None,
+            args.start_index is not None or args.end_index is not None]) > 1:
+        parser.error("Choose only one of --limit, --target-index or a target range")
 
     if args.max_requests < 100:
         parser.error('--max-requests must be >=100')
@@ -5017,6 +5040,8 @@ def main():
             max_details=args.max_details,
             target_index=args.target_index,
             max_requests=args.max_requests,
+            start_index=args.start_index,
+            end_index=args.end_index,
         )
 
         collector.run()
