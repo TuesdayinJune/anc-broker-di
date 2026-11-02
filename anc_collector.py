@@ -3641,6 +3641,17 @@ class Database:
 # COLLECTOR
 # ============================================================
 
+def select_target_scope(targets, limit=None, target_index=None):
+    """Select either one 1-based target or the first N targets, offline."""
+    if limit is not None and target_index is not None:
+        raise ValueError("--limit and --target-index cannot be used together")
+    if target_index is not None:
+        if not (1 <= target_index <= len(targets)):
+            raise ValueError("target index outside 1.." + str(len(targets)))
+        return targets[target_index - 1:target_index]
+    return targets[:limit] if limit is not None else targets
+
+
 class ANCCollector:
 
     def __init__(
@@ -3653,6 +3664,7 @@ class ANCCollector:
         detail_mode: str,
         max_submodels: int,
         max_details: int,
+        target_index: Optional[int] = None,
     ):
         self.db = db
 
@@ -3682,6 +3694,7 @@ class ANCCollector:
         )
 
         self.limit = limit
+        self.target_index = target_index
         self.resume = resume
         self.retry_unavailable = os.getenv("ANC_RETRY_UNAVAILABLE", "0") == "1"
         self.debug = debug
@@ -4436,14 +4449,11 @@ class ANCCollector:
         return status
 
     def run(self):
-        targets = list(
-            self.targets()
+        targets = select_target_scope(
+            list(self.targets()),
+            limit=self.limit,
+            target_index=self.target_index,
         )
-
-        if self.limit is not None:
-            targets = targets[
-                :self.limit
-            ]
 
         self.dashboard.target_total = len(
             targets
@@ -4819,6 +4829,12 @@ def parse_args():
         type=int,
         default=None,
     )
+    parser.add_argument(
+        "--target-index",
+        type=int,
+        default=None,
+        help="Collect exactly the Nth (1-based) province x vehicle target; e.g. 11 = first province / 11th vehicle",
+    )
 
     parser.add_argument(
         "--delay",
@@ -4873,6 +4889,12 @@ def parse_args():
         parser.error(
             "--limit must be >= 1"
         )
+    if args.target_index is not None:
+        maximum = len(PROVINCES) * len(VEHICLES)
+        if not (1 <= args.target_index <= maximum):
+            parser.error(f"--target-index must be in 1..{maximum}")
+    if args.limit is not None and args.target_index is not None:
+        parser.error("--limit and --target-index cannot be combined")
 
     if args.delay < 0.2:
         parser.error(
@@ -4964,6 +4986,7 @@ def main():
             detail_mode=args.detail_mode,
             max_submodels=args.max_submodels,
             max_details=args.max_details,
+            target_index=args.target_index,
         )
 
         collector.run()
