@@ -62,6 +62,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Optional
 from anc_requirements import TARGET_SPECS, assess_variant, spec_for, write_scope_reports
+from anc_sqlite_backend import SQLiteConnection
 from urllib.parse import quote, unquote, urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
@@ -2896,6 +2897,11 @@ class Database:
         return default
 
     def connect(self):
+        if self.setting('ANC_DB_BACKEND', default='mysql').lower() == 'sqlite':
+            self.connection = SQLiteConnection(
+                self.setting('ANC_SQLITE_PATH', default='anc_broker_test.sqlite3')
+            )
+            return self
         user = self.setting(
             "DB_USER",
             "MYSQL_USER",
@@ -2963,6 +2969,11 @@ class Database:
             return cursor.rowcount
 
     def initialize(self):
+        if isinstance(self.connection, SQLiteConnection):
+            self.connection.initialize_schema(
+                RECORD_TABLE, TARGET_TABLE, BRANCH_TABLE, PACKAGE_TABLE
+            )
+            return
         self.execute(
             f"""
             CREATE TABLE IF NOT EXISTS `{RECORD_TABLE}` (
@@ -4768,6 +4779,15 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--db-backend", choices=("sqlite", "mysql"), default=None,
+        help="Storage backend for collection (default: ANC_DB_BACKEND or mysql)"
+    )
+    parser.add_argument(
+        "--sqlite-path", default=None,
+        help="Local SQLite database filename (default: ANC_SQLITE_PATH)"
+    )
+
+    parser.add_argument(
         "--dry-run",
         action="store_true",
     )
@@ -4871,6 +4891,11 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    if args.db_backend:
+        os.environ['ANC_DB_BACKEND'] = args.db_backend
+    if args.sqlite_path:
+        os.environ['ANC_SQLITE_PATH'] = args.sqlite_path
 
     if args.dry_run:
         dry_run()
