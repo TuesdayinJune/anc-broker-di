@@ -448,6 +448,10 @@ class AccessBlocked(CollectorError):
     pass
 
 
+class RequestBudgetReached(CollectorError):
+    pass
+
+
 class DiscoveryError(CollectorError):
     pass
 
@@ -1192,6 +1196,7 @@ class HTTPClient:
         self.session.mount("https://", adapter)
 
         self.requests_count = 0
+        self.max_requests = MAX_REQUESTS
         self.success_count = 0
         self.not_found_count = 0
         self.error_count = 0
@@ -1336,9 +1341,9 @@ class HTTPClient:
             if STOP_REQUESTED:
                 raise KeyboardInterrupt
 
-            if self.requests_count >= MAX_REQUESTS:
-                raise CollectorError(
-                    "Maximum HTTP request limit reached"
+            if self.requests_count >= self.max_requests:
+                raise RequestBudgetReached(
+                    "HTTP request budget reached; saved data can be resumed"
                 )
 
             if not self.allowed(url):
@@ -3665,6 +3670,7 @@ class ANCCollector:
         max_submodels: int,
         max_details: int,
         target_index: Optional[int] = None,
+        max_requests: int = MAX_REQUESTS,
     ):
         self.db = db
 
@@ -3676,6 +3682,7 @@ class ANCCollector:
             dashboard=self.dashboard,
         )
 
+        self.http.max_requests = max_requests
         self.catalog = VehicleCatalog(
             self.http
         )
@@ -3825,7 +3832,7 @@ class ANCCollector:
 
             return "DONE"
 
-        except AccessBlocked:
+        except (AccessBlocked, RequestBudgetReached):
             raise
 
         except DiscoveryError as exc:
@@ -4155,6 +4162,14 @@ class ANCCollector:
 
             return complete
 
+        except RequestBudgetReached:
+            self.db.set_branch(
+                branch_id, target_id, entry.car_id, repair_type,
+                "INTERRUPTED", listing_url=listing_url, issues=issues,
+                error="Request budget reached; resume later",
+            )
+            raise
+
         except KeyboardInterrupt:
             self.db.set_branch(
                 branch_id,
@@ -4356,7 +4371,7 @@ class ANCCollector:
                     )
                 )
 
-            except AccessBlocked:
+            except (AccessBlocked, RequestBudgetReached):
                 raise
 
             except Exception as exc:
@@ -4501,6 +4516,15 @@ class ANCCollector:
                         province,
                         vehicle,
                     )
+
+                except RequestBudgetReached as exc:
+                    self.db.set_target(
+                        region, province, vehicle,
+                        "INTERRUPTED", 0, str(exc),
+                    )
+                    self.dashboard.status = "REQUEST_BUDGET_REACHED"
+                    self.dashboard.event(str(exc), "WARN")
+                    break
 
                 except AccessBlocked as exc:
                     self.db.set_target(
@@ -4841,6 +4865,8 @@ def parse_args():
         type=float,
         default=DEFAULT_DELAY,
     )
+    parser.add_argument("--max-requests", type=int, default=MAX_REQUESTS,
+                        help="Maximum HTTP requests per process; resumable")
 
     parser.add_argument(
         "--resume",
@@ -4895,6 +4921,9 @@ def parse_args():
             parser.error(f"--target-index must be in 1..{maximum}")
     if args.limit is not None and args.target_index is not None:
         parser.error("--limit and --target-index cannot be combined")
+
+    if args.max_requests < 100:
+        parser.error('--max-requests must be >=100')
 
     if args.delay < 0.2:
         parser.error(
@@ -4987,6 +5016,7 @@ def main():
             max_submodels=args.max_submodels,
             max_details=args.max_details,
             target_index=args.target_index,
+            max_requests=args.max_requests,
         )
 
         collector.run()
@@ -5020,11 +5050,13 @@ def main():
             count,
         )
 
-        return (
-            130
-            if STOP_REQUESTED
-            else 0
-        )
+        if STOP_REQUESTED:
+            return 130
+        if collector.dashboard.status == "REQUEST_BUDGET_REACHED":
+            return 75
+        if collector.dashboard.status == "BLOCKED":
+            return 76
+        return 0
 
     except KeyboardInterrupt:
         logger.warning(
