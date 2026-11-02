@@ -127,6 +127,7 @@ def write_report(input_csv, output_dir):
     counters = Counter()
     for row in rows:
         counters['STATUS:' + (row.get('detail_status') or '(blank)')] += 1
+        counters['SUM_MATCH:' + (row.get('sum_match_status') or '(blank)')] += 1
         for flag in (row['review_flags'] or '').split(';'):
             if flag:
                 counters['FLAG:' + flag] += 1
