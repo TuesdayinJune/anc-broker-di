@@ -3658,8 +3658,8 @@ def select_target_scope(targets, limit=None, target_index=None,
             raise ValueError("target index outside 1.." + str(len(targets)))
         return targets[target_index - 1:target_index]
     if start_index is not None or end_index is not None:
-        start = start_index or 1
-        end = end_index or len(targets)
+        start = 1 if start_index is None else start_index
+        end = len(targets) if end_index is None else end_index
         if not (1 <= start <= end <= len(targets)):
             raise ValueError("target range must be inside 1.." + str(len(targets)))
         return targets[start - 1:end]
