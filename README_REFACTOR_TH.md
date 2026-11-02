@@ -76,3 +76,32 @@ git pull --ff-only origin refactor-v1
 ควรเก็บ SQLite และ WAL/SHM files ในเครื่องตามนโยบาย IT และไม่ Push ขึ้น GitHub (`.gitignore` ได้เพิ่ม pattern)
 **ข้อควรทราบ** SQLite บันทึก Decimal เป็น TEXT เพื่อหลีกเลี่ยงการเสียความแม่นยำจาก Float; การวิเคราะห์ตัวเลขต้องแปลงเป็น Decimal/CAST
 **ยังไม่ทดสอบ End-to-End บนเครื่องผู้ใช้** ต้องตรวจ `test_anc_sqlite` และผลจาก 1 Target ก่อนขยายงาน
+
+## Data Quality v2 (แก้หลังทดสอบ 193 รายการ)
+
+ปรับ `anc_collector.py` และเพิ่ม `anc_data_quality.py`, `test_anc_data_quality.py`:
+- ยังคงใช้เบี้ยและทุนของ **Listing** เป็นค่าข้อเสนอ ไม่เอาค่า Detail มาแทนโดยอัตโนมัติ
+- ถ้าวงเงิน Own Damage ของ Detail ไม่ตรงทุน Listing: เก็บค่าของ Detail ใน `raw_detail`; ไม่ใส่ค่า Own Damage ที่ไม่ตรงลงคอลัมน์มาตรฐาน และตั้ง `REVIEW_REQUIRED`
+- ถ้าราคา Listing != Detail: คงข้อมูลสองแหล่งและตั้ง `REVIEW_REQUIRED` (เศษทศนิยมอาจเป็นการปัดเศษ ให้พิจารณารายงาน)
+- การประเมิน Branch: `DETAIL_UNAVAILABLE` ไม่ใช่ Detail สำเร็จ จึงทำให้ Branch เป็น `PARTIAL` หากยังมีรายการไม่ครบ
+- โหมด Resume ปกติยังไม่ยิงซ้ำรายการ `DETAIL_UNAVAILABLE` เพื่อลดการเรียกเว็บ
+- หากต้องการลอง 404 ซ้ำ ให้ระบุ `--retry-unavailable` อย่างชัดเจน; อย่าตั้งค่านี้กับทั้ง 24 จังหวัดโดยไม่ทดลองก่อน
+- ออกรายงาน CSV ใน `anc_audit_output/` หลัง Collector export สำเร็จ
+- `anc_data_quality.py` ใช้ตรวจ CSV เดิม 193 รายการได้ทันทีแบบออฟไลน์
+
+### ขั้นตอนทดสอบ (ไม่ต้องเรียกเว็บไซต์)
+```powershell
+git switch refactor-v1
+git pull --ff-only origin refactor-v1
+.\.venv\Scripts\python.exe -m unittest -v test_anc_requirements test_anc_sqlite test_anc_data_quality
+.\.venv\Scripts\python.exe anc_data_quality.py --input .\anc_competitor_insurance_24_provinces.csv --out .\anc_audit_output
+```
+ไฟล์ผล:
+- `anc_audit_output/anc_audit_summary.csv`: จำนวนแต่ละสถานะ/ประเด็น
+- `anc_audit_output/anc_audit_review_queue.csv`: แถวที่ควรตรวจ
+- `anc_audit_output/anc_audit_all.csv`: ข้อมูลทุกแถวพร้อมธง
+
+**คำเตือน:** ข้อมูล 193 แถวใน SQLite เดิมยังมีค่า Own Damage จาก Parser เวอร์ชันก่อน
+การอัปเดตโค้ด **ไม่แก้ย้อนหลังในฐานข้อมูลเดิม**; รายงานออฟไลน์จะตรวจได้จาก `raw_detail`.
+อย่าลบฐาน SQLite เดิมหรือรัน `--no-resume` กับไฟล์เดิมโดยไม่สำรองข้อมูลก่อน.
+การทดสอบ Unit Tests ไม่ใช่การรับรองความถูกต้องของราคา/กรมธรรม์กับเว็บไซต์จริง.
