@@ -62,7 +62,7 @@ def planned_targets():
 def log_issue(folder, batch_start, batch_end, index, key, reason, code, logfile):
     path = folder / "errors.csv"
     new = not path.exists()
-    with path.open("a", newline="", encoding="utf-8-sig") as stream:
+    with path.open("a", newline="", encoding="utf-8-sig" if new else "utf-8") as stream:
         writer = csv.writer(stream)
         if new:
             writer.writerow(["when", "batch_start", "batch_end", "target_index",
@@ -188,6 +188,10 @@ def main(argv=None):
                 # A Python crash late in a batch can happen after all targets
                 # were committed. Do not re-fetch already terminal targets.
                 state = snapshot(db_path)
+                if any(status_for(state["statuses"], targets, i) == "BLOCKED"
+                       for i in range(start, end + 1)):
+                    print("STOP: website blocking recorded in target checkpoint")
+                    return 76
                 remaining = [i for i in range(start, end + 1)
                              if status_for(state["statuses"], targets, i) not in TERMINAL]
                 print(f"Batch failed; unfinished targets: {remaining}", flush=True)
@@ -198,6 +202,10 @@ def main(argv=None):
                         print(f"STOP: systemic error on target {index}, log={log_one}")
                         return code_one if code_one > 0 else 130
                     if code_one != 0:
+                        state_one = snapshot(db_path)
+                        if status_for(state_one["statuses"], targets, index) == "BLOCKED":
+                            print(f"STOP: website block recorded at target {index}")
+                            return 76
                         errors += 1
                         batch_errors += 1
                         warning_count += 1
