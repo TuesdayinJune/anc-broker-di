@@ -89,11 +89,24 @@ def main(argv=None):
                     "--max-requests", str(args.max_requests),
                     "--resume", "--output", str(output),
                 ]
-                logfile = run_dir / f"batch_{start:03d}_{end:03d}_try{attempts}.log"
+                # Never overwrite logs from earlier crashed runs/resumes.
+                attempt_file_no = attempts
+                logfile = run_dir / f"batch_{start:03d}_{end:03d}_try{attempt_file_no}.log"
+                while logfile.exists():
+                    attempt_file_no += 1
+                    logfile = run_dir / f"batch_{start:03d}_{end:03d}_try{attempt_file_no}.log"
                 print(f"START targets {start}-{end}/480 attempt {attempts}; log {logfile}", flush=True)
+                # Python may inherit the system's cp874 encoding on Thai
+                # Windows. Force UTF-8 for stdout (redirected to a file) and
+                # make subsequent errors replaceable rather than fatal.
+                child_env = os.environ.copy()
+                child_env["PYTHONIOENCODING"] = "utf-8:replace"
+                child_env["PYTHONUTF8"] = "1"
+                child_env["TERM"] = "dumb"
+                child_env["NO_COLOR"] = "1"
                 with logfile.open("w", encoding="utf-8", errors="replace") as log:
                     proc = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT,
-                                          check=False)
+                                          env=child_env, check=False)
                 print(f"Finished targets {start}-{end}; exit={proc.returncode}", flush=True)
                 if proc.returncode == 75 and attempts < 2:
                     print("Request budget reached; restart same batch with --resume", flush=True)
