@@ -165,3 +165,23 @@ Get-Content .\anc_audit_output\anc_audit_summary.csv -TotalCount 30
 ```
 
 ฐานข้อมูลใหม่ `anc_full_24provinces.sqlite3` ไม่ทับ Pilot เดิม. `--max-requests` เป็นเพดานด้านความปลอดภัยของโปรแกรม ไม่ใช่โควตาของเว็บไซต์ ควรปฏิบัติตามเงื่อนไขการเข้าถึงและนโยบายบริษัทเสมอ.
+
+
+## Optional Smart Continue (for non-critical errors)
+
+เมื่อ \`anc_full_run.py\` หยุดจาก Python/console error (exit 1) สามารถใช้ตัวเลือก Smart Continue แทนได้ โดยใช้ SQLite/CSV เดิมและ \`--resume\`. **อย่ารัน Full Run สองตัวพร้อมกัน**:
+
+\`\`\`powershell
+git switch refactor-v1
+git pull --ff-only origin refactor-v1
+.\.venv\Scripts\python.exe -m py_compile anc_collector.py anc_smart_run.py
+.\.venv\Scripts\python.exe anc_smart_run.py --db .\anc_full_24provinces.sqlite3 --output .\anc_full_24provinces.csv --batch-size 20 --delay 3 --max-requests 18000 --max-consecutive-errors 3 --max-errors 30
+\`\`\`
+
+- รัน Batch 20 targets ตามปกติ. หาก child process กลับ \`exit=1\`, Smart Continue บันทึกปัญหา และเลือกเฉพาะ Target ที่ยังไม่อยู่ในสถานะ \`DONE/PARTIAL/FAILED\` มาประมวลผลแยกราย Target; ข้อมูลใน SQLite ไม่ถูกลบ
+- หลังแต่ละ Batch จะสร้าง \`anc_full_run/checkpoint_XXX_YYY.json\` (มี unresolved indexes), Log ไม่เขียนทับ, และ \`anc_full_run/errors.csv\` แสดงข้อผิดพลาดที่พบ
+- สถานะ \`PARTIAL\` ถือว่าประมวลผลแล้วแต่ข้อมูลไม่ครบ: **ไม่ได้แปลว่าผ่าน QA**. ควรประเมินความครอบคลุมของเบี้ย/ทุนและสถานะ Detail จาก audit หลังเก็บครบ. Target \`FAILED\` อาจเป็นรุ่นที่ไม่มีข้อมูลหรือ parsing error ต้องดูสถานะประกอบ
+- หยุดเมื่อเว็บบล็อก / 403 / 429 / robots (exit 76), HTTP budget ซ้ำ (75), DB integrity/count ผิด (78), หรือ Error ติดต่อกันเกิน threshold (77). ไม่ทำ bypass เว็บไซต์
+- Exit \`79\` หมายถึงพยายามทำครบช่วงที่ขอแต่ยังมีคำเตือน/ตกหล่น; ไม่ใช่สำเร็จ 100%. Exit \`0\` หมายถึงไม่มี process-level errors ที่ยังไม่ได้จัดการ; ไม่ได้ยืนยันคุณภาพธุรกิจทุกแถว
+- ตัวเลือกนี้ไม่ได้เปลี่ยนโค้ด logic การดึงเบี้ยประกัน และไม่ได้พยายามแทนค่า/เติมข้อมูลของ URL ที่ไม่มี Detail
+- Run นี้ยังไม่ได้ผ่านการทดสอบ end-to-end บน Windows เครื่องผู้ใช้ โปรดตรวจไฟล์ log/checkpoint หลัง Batch แรกก่อนปล่อยรันยาว
