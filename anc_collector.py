@@ -135,7 +135,13 @@ USER_AGENT = (
 
 REPAIR_TYPES = ("ซ่อมอู่", "ซ่อมห้าง")
 
-console = Console()
+# Avoid Rich's legacy Win32 renderer (and cp874 text conversion) when this
+# program is run inside the full-run subprocess with stdout redirected.
+console = Console(
+    legacy_windows=False,
+    force_terminal=False if not sys.stdout.isatty() else None,
+    color_system=None if not sys.stdout.isatty() else "auto",
+)
 logger = logging.getLogger("anc_collector")
 logger.setLevel(logging.INFO)
 
@@ -607,6 +613,13 @@ class CollectorDashboard:
         self._last_render = 0.0
 
     def start(self):
+        # During batch collection stdout is a log file, not an interactive
+        # terminal. A live Rich dashboard here is expensive and on Windows
+        # can crash the entire collector via a cp874 UnicodeEncodeError.
+        # All substantive events still go to the UTF-8 anc_collector.log.
+        if not sys.stdout.isatty():
+            logger.info("DASHBOARD LIVE DISABLED | redirected stdout")
+            return
         self._live = Live(
             self.render(),
             console=console,
